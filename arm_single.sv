@@ -77,12 +77,13 @@ module arm(input  logic        clk, reset,
   logic [3:0] ALUFlags;
   logic       RegWrite, ALUSrc, MemtoReg, PCSrc;
   logic [1:0] RegSrc, ImmSrc;
-  logic [2:0] ALUControl; // Fio de 3 bits para ALUControl
+  logic [2:0] ALUControl;
 
   controller c(clk, reset, Instr, ALUFlags, 
                RegSrc, RegWrite, ImmSrc, 
                ALUSrc, ALUControl,
                MemWrite, MemtoReg, PCSrc);
+               
   datapath dp(clk, reset, 
               RegSrc, RegWrite, ImmSrc,
               ALUSrc, ALUControl,
@@ -128,10 +129,16 @@ module decoder(input  logic [1:0] Op,
 
   always_comb
     case(Op)
-      2'b00: if (Funct[5]) controls = 10'b0000101001; // DP-Imm
-            else          controls = 10'b0000001001; // DP-Reg
+      2'b00: // Data-processing
+        if (Funct[4:1] == 4'b1010) begin // Se for CMP
+          if (Funct[5]) controls = 10'b0000100001; // CMP com imediato (RegW=0)
+          else          controls = 10'b0000000001; // CMP com registrador (RegW=0)
+        end else begin // Para todas as outras instruções DP (ADD, SUB, MOV, etc.)
+          if (Funct[5]) controls = 10'b0000101001; // DP com imediato (RegW=1)
+          else          controls = 10'b0000001001; // DP com registrador (RegW=1)
+        end          
       2'b01: if (Funct[0]) controls = 10'b0001111000; // LDR
-            else          controls = 10'b1001110100; // STR
+            else controls = 10'b1001110100; // STR
       2'b10:              controls = 10'b0110100010; // B
       default:            controls = 10'bx;
     endcase
@@ -146,6 +153,7 @@ module decoder(input  logic [1:0] Op,
         4'b0000: ALUControl = 3'b010; // AND
         4'b1100: ALUControl = 3'b011; // ORR
         4'b1101: ALUControl = 3'b100; // MOV
+        4'b1010: ALUControl = 3'b001; // CMP
         default: ALUControl = 3'bx;
       endcase
       
@@ -215,7 +223,7 @@ module datapath(input  logic        clk, reset,
                 input  logic        RegWrite,
                 input  logic [1:0]  ImmSrc,
                 input  logic        ALUSrc,
-                input  logic [2:0]  ALUControl, // Porta de 3 bits
+                input  logic [2:0]  ALUControl,
                 input  logic        MemtoReg,
                 input  logic        PCSrc,
                 output logic [3:0]  ALUFlags,
