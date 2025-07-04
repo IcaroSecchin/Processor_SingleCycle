@@ -1,3 +1,3 @@
-MOV R1, #10
-MOV R2, #12
-EOR R3, R1, R2
+MOV R1, #7
+MOV R2, #2
+LSL R3, R1, R2
