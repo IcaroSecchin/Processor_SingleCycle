@@ -146,6 +146,7 @@ module decoder(input  logic [1:0] Op,
         4'b1101: ALUControl = 3'b100; // MOV
         4'b1010: ALUControl = 3'b001; // CMP
         4'b1000: ALUControl = 3'b010; // TST
+        4'b0001: ALUControl = 3'b101; // EOR
         default: ALUControl = 3'bx;
       endcase
       
@@ -334,7 +335,8 @@ module alu(input  logic [31:0] a, b,
       3'b001: Result = sum;
       3'b010: Result = a & b;  //AND
       3'b011: Result = a | b;  //ORR
-      3'b100: Result = b;      // MOV
+      3'b100: Result = b;      //MOV
+      3'b101: Result = a ^ b;  //EOR
       default: Result = 32'bx;
     endcase
 
