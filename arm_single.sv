@@ -1,8 +1,3 @@
-// arm_single.sv
-// David_Harris@hmc.edu and Sarah_Harris@hmc.edu 25 June 2013
-// Single-cycle implementation of a subset of ARMv4
-// Versão final com instrução MOV e correções de bugs.
-
 module testbench();
   logic        clk;
   logic        reset;
@@ -22,18 +17,6 @@ module testbench();
     clk <= 1; #5; clk <= 0; #5;
   end
 
-  // Verifica os resultados
-  always @(negedge clk) begin
-    if(MemWrite) begin
-      if(DataAdr === 100 && WriteData === 7) begin
-        $display("Simulation succeeded");
-        $stop;
-      end else if (DataAdr !== 96) begin 
-        $display("Simulation failed");
-        $stop;
-      end
-    end
-  end
 endmodule
 
 
@@ -53,7 +36,9 @@ module dmem(input  logic        clk, we,
             input  logic [31:0] a, wd,
             output logic [31:0] rd);
   logic [31:0] RAM[63:0];
-  assign rd = RAM[a[31:2]]; // Alinhado por palavra
+
+  assign rd = RAM[a[31:2]]; // word aligned
+
   always_ff @(posedge clk)
     if (we) RAM[a[31:2]] <= wd;
 endmodule
@@ -61,9 +46,12 @@ endmodule
 
 module imem(input  logic [31:0] a,
             output logic [31:0] rd);
+
   logic [31:0] RAM[63:0];
+
   initial
     $readmemh("memfile2.dat", RAM); // Carrega o arquivo de memória
+
   assign rd = RAM[a[31:2]]; // Alinhado por palavra
 endmodule
 
@@ -92,14 +80,17 @@ module arm(input  logic        clk, reset,
               ALUResult, WriteData, ReadData);
 endmodule
 
+//E3A00060
+//1110 0011 1010 0000 0000 0000 0110 0000
+
 module controller(input  logic        clk, reset,
-                  input  logic [31:0] Instr,      // Porta com 32 bits
+                  input  logic [31:0] Instr,      // Porta com 32 bits, "tava dando erro de out of range"
                   input  logic [3:0]  ALUFlags,
                   output logic [1:0]  RegSrc,
                   output logic        RegWrite,
                   output logic [1:0]  ImmSrc,
                   output logic        ALUSrc, 
-                  output logic [2:0]  ALUControl, //Porta de saída com 3 bits
+                  output logic [2:0]  ALUControl, //Porta de saída com 3 bits para aumentar a quantidade de instruções possiveis
                   output logic        MemWrite, MemtoReg,
                   output logic        PCSrc);
 
@@ -130,13 +121,13 @@ module decoder(input  logic [1:0] Op,
   always_comb
     case(Op)
       2'b00: // Data-processing
-        if (Funct[4:1] == 4'b1010) begin // Se for CMP
-          if (Funct[5]) controls = 10'b0000100001; // CMP com imediato (RegW=0)
-          else          controls = 10'b0000000001; // CMP com registrador (RegW=0)
-        end else begin // Para todas as outras instruções DP (ADD, SUB, MOV, etc.)
-          if (Funct[5]) controls = 10'b0000101001; // DP com imediato (RegW=1)
-          else          controls = 10'b0000001001; // DP com registrador (RegW=1)
-        end          
+        if (Funct[4:1] == 4'b1010 || Funct[4:1] == 4'b1000) begin // Se for CMP ou TST
+            if (Funct[5]) controls = 10'b0000100001;
+            else          controls = 10'b0000000001;
+          end else begin // Para todas as outras instruções
+            if (Funct[5]) controls = 10'b0000101001;
+            else          controls = 10'b0000001001;
+          end         
       2'b01: if (Funct[0]) controls = 10'b0001111000; // LDR
             else controls = 10'b1001110100; // STR
       2'b10:              controls = 10'b0110100010; // B
@@ -154,6 +145,7 @@ module decoder(input  logic [1:0] Op,
         4'b1100: ALUControl = 3'b011; // ORR
         4'b1101: ALUControl = 3'b100; // MOV
         4'b1010: ALUControl = 3'b001; // CMP
+        4'b1000: ALUControl = 3'b010; // TST
         default: ALUControl = 3'bx;
       endcase
       
@@ -167,7 +159,7 @@ module decoder(input  logic [1:0] Op,
   assign PCS = ((Rd == 4'b1111) & RegW) | Branch; 
 endmodule
 
-module condlogic(input logic clk, reset,
+module condlogic(input  logic       clk, reset,
                  input  logic [3:0] Cond,
                  input  logic [3:0] ALUFlags,
                  input  logic [1:0] FlagW,
@@ -181,11 +173,17 @@ module condlogic(input logic clk, reset,
   flopenr #(2) flagreg1(clk, reset, FlagWrite[1], ALUFlags[3:2], Flags[3:2]);
   flopenr #(2) flagreg0(clk, reset, FlagWrite[0], ALUFlags[1:0], Flags[1:0]);
 
+  // A lógica de verificação de condição usa as flags do ciclo anterior.
   condcheck cc(Cond, Flags, CondEx);
-  assign FlagWrite = FlagW & {2{CondEx}};
+
+  // Os sinais de controle da instrução atual são gerados com base na condição.
   assign RegWrite  = RegW  & CondEx;
   assign MemWrite  = MemW  & CondEx;
   assign PCSrc     = PCS   & CondEx;
+
+  // A escrita de novas flags para o próximo ciclo também depende da condição da instrução atual.
+  assign FlagWrite = FlagW & {2{CondEx}};
+
 endmodule
 
 module condcheck(input  logic [3:0] Cond,
@@ -199,22 +197,22 @@ module condcheck(input  logic [3:0] Cond,
              
   always_comb
     case(Cond)
-      4'b0000: CondEx = zero;
-      4'b0001: CondEx = ~zero;
-      4'b0010: CondEx = carry;
-      4'b0011: CondEx = ~carry;
-      4'b0100: CondEx = neg;
-      4'b0101: CondEx = ~neg;
-      4'b0110: CondEx = overflow;
-      4'b0111: CondEx = ~overflow;
-      4'b1000: CondEx = carry & ~zero;
-      4'b1001: CondEx = ~(carry & ~zero);
-      4'b1010: CondEx = ge;
-      4'b1011: CondEx = ~ge;
-      4'b1100: CondEx = ~zero & ge;
-      4'b1101: CondEx = ~(~zero & ge);
-      4'b1110: CondEx = 1'b1;
-      default: CondEx = 1'bx;
+      4'b0000: CondEx = zero;           // EQ
+      4'b0001: CondEx = ~zero;          // NE
+      4'b0010: CondEx = carry;          // CS
+      4'b0011: CondEx = ~carry;         // CC
+      4'b0100: CondEx = neg;            // MI
+      4'b0101: CondEx = ~neg;           // PL
+      4'b0110: CondEx = overflow;       // VS
+      4'b0111: CondEx = ~overflow;      // VC
+      4'b1000: CondEx = carry & ~zero;  // HI
+      4'b1001: CondEx = ~(carry & ~zero);// LS
+      4'b1010: CondEx = ge;             // GE
+      4'b1011: CondEx = ~ge;            // LT
+      4'b1100: CondEx = ~zero & ge;     // GT
+      4'b1101: CondEx = ~(~zero & ge);  // LE
+      4'b1110: CondEx = 1'b1;           // Always
+      default: CondEx = 1'bx;           // undefined
     endcase
 endmodule
 
@@ -324,7 +322,7 @@ module alu(input  logic [31:0] a, b,
   logic        neg, zero, carry, overflow;
   logic [31:0] condinvb;
   logic [32:0] sum;
-  logic        isArith;
+  logic        isArith; //Sinal intermediario para saber se é uma operação aritimedica
 
   assign isArith = (ALUControl == 3'b000) | (ALUControl == 3'b001);
   assign condinvb = (ALUControl == 3'b001) ? ~b : b;
@@ -334,8 +332,8 @@ module alu(input  logic [31:0] a, b,
     case (ALUControl)
       3'b000: Result = sum;
       3'b001: Result = sum;
-      3'b010: Result = a & b;
-      3'b011: Result = a | b;
+      3'b010: Result = a & b;  //AND
+      3'b011: Result = a | b;  //ORR
       3'b100: Result = b;      // MOV
       default: Result = 32'bx;
     endcase

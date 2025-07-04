@@ -1,9 +1,8 @@
-E3A01005      // 0x00: MOV R1, #5
-E3A02002      // 0x04: MOV R2, #2
-E0813002      // 0x08: ADD R3, R1, R2    ; R3 = 5 + 2 = 7
-E3A0400A      // 0x0C: MOV R4, #10
-E1540003      // 0x10: CMP R4, R3        ; Compara 10 com 7. Flags são atualizadas.
-CA000000      // 0x14: BGT final_code    ; Desvia se 10 > 7. PC vai para 0x1C.
-EAFFFFFE      // 0x18: fail_loop: B .    ; Loop infinito se o desvio falhar.
-E3A05064      // 0x1C: final_code: MOV R5, #100
-E5853000      // 0x20: STR R3, [R5]      ; Armazena R3 (7) no endereço 100.
+0510A0E3
+0A20A0E3
+020011E1
+0000000A
+FEFFFFEA
+0710A0E3
+6420A0E3
+001082E5

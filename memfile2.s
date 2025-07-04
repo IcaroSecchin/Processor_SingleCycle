@@ -1,5 +1,10 @@
 // Progrma rápido para testar novas funções
 
-MOV R2, #42    ; R2 = 42
-MOV R1, R2     ; R1 = R2 => R1 = 42
-STR R1, [R0]   ; Salva valor de R1 na memória para inspeção (Testando o MOV)
+mov r1, #5
+mov r2, #0xa
+tst r1, r2
+beq #0x14
+b #0x10
+mov r1, #7
+mov r2, #0x64
+str r1, [r2]
