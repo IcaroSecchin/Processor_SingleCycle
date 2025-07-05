@@ -121,13 +121,14 @@ module decoder(input  logic [1:0] Op,
   always_comb
     case(Op)
       2'b00: // Data-processing
-        if (Funct[4:1] == 4'b1010 || Funct[4:1] == 4'b1000) begin // Se for CMP ou TST
-            if (Funct[5]) controls = 10'b0000100001;
-            else          controls = 10'b0000000001;
-          end else begin // Para todas as outras instruções
-            if (Funct[5]) controls = 10'b0000101001;
-            else          controls = 10'b0000001001;
-          end         
+        // Verifica se é uma instrução de teste (que não escreve resultado)
+        if ( (Funct[4:1] == 4'b1000) || (Funct[4:1] == 4'b1010) ) begin // TST or CMP
+          if (Funct[5]) controls = 10'b0000100001; // Imediato (RegW=0)
+          else          controls = 10'b0000000001; // Registrador (RegW=0)
+        end else begin // Para TODAS as outras instruções DP (ADD, SUB, MOV, LSL, etc.)
+          if (Funct[5]) controls = 10'b0000101001; // Imediato (RegW=1)
+          else          controls = 10'b0000001001; // Registrador (RegW=1)
+        end         
       2'b01: if (Funct[0]) controls = 10'b0001111000; // LDR
             else controls = 10'b1001110100; // STR
       2'b10:              controls = 10'b0110100010; // B
@@ -236,11 +237,15 @@ module datapath(input  logic        clk, reset,
   logic [31:0] PCNext, PCPlus4, PCPlus8;
   logic [31:0] ExtImm, SrcA, SrcB, Result;
   logic [3:0]  RA1, RA2;
+  logic [31:0] ShifterOut; //adicionado para rolar o deslocamento
 
   mux2 #(32) pcmux(PCPlus4, ALUResult, PCSrc, PCNext);
   flopr #(32) pcreg(clk, reset, PCNext, PC);
   adder #(32) pcadd1(PC, 32'd4, PCPlus4);
   adder #(32) pcadd2(PC, 32'd8, PCPlus8);
+
+  shifter shift_unit(WriteData, Instr[11:7], Instr[6:5], ShifterOut);
+
 
   mux2 #(4)   ra1mux(Instr[19:16], 4'b1111, RegSrc[0], RA1);
   mux2 #(4)   ra2mux(Instr[3:0], Instr[15:12], RegSrc[1], RA2);
@@ -252,7 +257,7 @@ module datapath(input  logic        clk, reset,
   mux2 #(32)  resmux(ALUResult, ReadData, MemtoReg, Result);
   extend      ext(Instr[23:0], ImmSrc, ExtImm);
 
-  mux2 #(32)  srcbmux(WriteData, ExtImm, ALUSrc, SrcB);
+  mux2 #(32)  srcbmux(ShifterOut, ExtImm, ALUSrc, SrcB);
   alu         alu(SrcA, SrcB, ALUControl, 
                   ALUResult, ALUFlags);
 endmodule
@@ -325,7 +330,7 @@ module alu(input  logic [31:0] a, b,
   logic        neg, zero, carry, overflow;
   logic [31:0] condinvb;
   logic [32:0] sum;
-  logic        isArith; //Sinal intermediario para saber se é uma operação aritimedica
+  logic        isArith; //Sinal intermediario para saber que é uma operação aritimedica
 
   assign isArith = (ALUControl == 3'b000) | (ALUControl == 3'b001);
   assign condinvb = (ALUControl == 3'b001) ? ~b : b;
@@ -349,4 +354,18 @@ module alu(input  logic [31:0] a, b,
   assign carry    = isArith & sum[32];
   assign overflow = isArith & ~(a[31] ^ b[31] ^ (ALUControl == 3'b001)) & (a[31] ^ sum[31]); 
   assign ALUFlags = {neg, zero, carry, overflow};
+endmodule
+
+module shifter(input  logic [31:0] DataIn,      // Dado deslocado (de Rm)
+               input  logic [4:0]  ShiftAmount, // Quantidade de deslocamento (de shamt5)
+               input  logic [1:0]  ShiftType,   // Tipo de deslocamento (LSL, LSR, ASR)
+               output logic [31:0] DataOut);
+
+  always_comb
+    case (ShiftType)
+      2'b00:  DataOut = DataIn << ShiftAmount; // LSL (Logical Shift Left)
+      2'b01:  DataOut = DataIn >> ShiftAmount; // LSR (Logical Shift Right)
+      2'b10:  DataOut = DataIn >>> ShiftAmount;// ASR (Arithmetic Shift Right)
+      default: DataOut = DataIn; // Caso padrão ou ROR
+    endcase
 endmodule

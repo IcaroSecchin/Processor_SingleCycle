@@ -1,4 +1,3 @@
-MOV R1, #0
-SUB R1, R1, #4    
-MOV R2, #1
-ASR R3, R1, R2
+MOV R1, #10
+MOV R2, #5 
+ADD R3, R1, R2, LSL #2
