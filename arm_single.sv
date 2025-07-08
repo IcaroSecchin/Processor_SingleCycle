@@ -70,18 +70,15 @@ module arm(input  logic        clk, reset,
   controller c(clk, reset, Instr, ALUFlags, 
                RegSrc, RegWrite, ImmSrc, 
                ALUSrc, ALUControl,
-               MemWrite, MemtoReg, PCSrc);
+               MemWrite, MemtoReg, PCSrc, LinkWrite);
                
   datapath dp(clk, reset, 
               RegSrc, RegWrite, ImmSrc,
               ALUSrc, ALUControl,
               MemtoReg, PCSrc,
               ALUFlags, PC, Instr,
-              ALUResult, WriteData, ReadData);
+              ALUResult, WriteData, ReadData, LinkWrite);
 endmodule
-
-//E3A00060
-//1110 0011 1010 0000 0000 0000 0110 0000
 
 module controller(input  logic        clk, reset,
                   input  logic [31:0] Instr,      // Porta com 32 bits, "tava dando erro de out of range"
@@ -92,15 +89,16 @@ module controller(input  logic        clk, reset,
                   output logic        ALUSrc, 
                   output logic [2:0]  ALUControl, //Porta de saída com 3 bits para aumentar a quantidade de instruções possiveis
                   output logic        MemWrite, MemtoReg,
-                  output logic        PCSrc);
+                  output logic        PCSrc,
+                  output logic        LinkWrite);
 
   logic [1:0] FlagW;
   logic       PCS, RegW, MemW;
   
   
-  decoder dec(Instr[27:26], Instr[25:20], Instr[15:12],
+  decoder dec(Instr[27:26], Instr[25:20], Instr[15:12], Instr[24],
               FlagW, PCS, RegW, MemW,
-              MemtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl);
+              MemtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl, LinkWrite);
   condlogic cl(clk, reset, Instr[31:28], ALUFlags,
                FlagW, PCS, RegW, MemW,
                PCSrc, RegWrite, MemWrite);
@@ -109,13 +107,15 @@ endmodule
 module decoder(input  logic [1:0] Op,
                input  logic [5:0] Funct,
                input  logic [3:0] Rd,
+               input  logic       BLFlag, //Flag responsavel pra saber que é um Branch Linkado
                output logic [1:0] FlagW,
                output logic       PCS, RegW, MemW,
                output logic       MemtoReg, ALUSrc,
                output logic [1:0] ImmSrc, RegSrc,
-               output logic [2:0] ALUControl);
+               output logic [2:0] ALUControl,
+               output logic       LinkWrite);
 
-  logic [9:0] controls;
+  logic [10:0] controls;
   logic       Branch, ALUOp;
 
   always_comb
@@ -123,19 +123,24 @@ module decoder(input  logic [1:0] Op,
       2'b00: // Data-processing
         // Verifica se é uma instrução de teste (que não escreve resultado)
         if ( (Funct[4:1] == 4'b1000) || (Funct[4:1] == 4'b1010) ) begin // TST or CMP
-          if (Funct[5]) controls = 10'b0000100001; // Imediato (RegW=0)
-          else          controls = 10'b0000000001; // Registrador (RegW=0)
+          if (Funct[5]) controls = 11'b00000100001; // Imediato (RegW=0)
+          else          controls = 11'b00000000001; // Registrador (RegW=0)
         end else begin // Para TODAS as outras instruções DP (ADD, SUB, MOV, LSL, etc.)
-          if (Funct[5]) controls = 10'b0000101001; // Imediato (RegW=1)
-          else          controls = 10'b0000001001; // Registrador (RegW=1)
+          if (Funct[5]) controls = 11'b00000101001; // Imediato (RegW=1)
+          else          controls = 11'b00000001001; // Registrador (RegW=1)
         end         
-      2'b01: if (Funct[0]) controls = 10'b0001111000; // LDR
-            else controls = 10'b1001110100; // STR
-      2'b10:              controls = 10'b0110100010; // B
-      default:            controls = 10'bx;
+      2'b01: if (Funct[0]) controls = 11'b00001111000; // LDR
+            else controls = 11'b01001110100; // STR
+
+
+      2'b10: if(BLFlag == 0) controls = 11'b00110100010; // B
+              else           controls = 11'b10110101010; // BL (Aciona o RegW para 1 ja que precisa escrever em um Registrador)
+
+
+      default:            controls = 11'bxxxxxxxxxxx;
     endcase
 
-  assign {RegSrc, ImmSrc, ALUSrc, MemtoReg, RegW, MemW, Branch, ALUOp} = controls;
+  assign {LinkWrite, RegSrc, ImmSrc, ALUSrc, MemtoReg, RegW, MemW, Branch, ALUOp} = controls;
   
   always_comb
     if (ALUOp) begin
@@ -159,7 +164,7 @@ module decoder(input  logic [1:0] Op,
       ALUControl = 3'b000; // ADD para LDR/STR
       FlagW      = 2'b00;  // Não escreve flags
     end
-            
+
   assign PCS = ((Rd == 4'b1111) & RegW) | Branch; 
 endmodule
 
@@ -232,13 +237,28 @@ module datapath(input  logic        clk, reset,
                 output logic [31:0] PC,
                 input  logic [31:0] Instr,
                 output logic [31:0] ALUResult, WriteData,
-                input  logic [31:0] ReadData);
+                input  logic [31:0] ReadData,
+                input  logic        LinkWrite);
 
   logic [31:0] PCNext, PCPlus4, PCPlus8;
   logic [31:0] ExtImm, SrcA, SrcB, Result;
   logic [3:0]  RA1, RA2;
   logic [31:0] ShifterOut; //adicionado para rolar o deslocamento
 
+  logic [31:0] EscritaFinal;
+  logic [3:0]  EscritaRegFinal;
+
+  // MUX 1: Decide ONDE escrever (em qual registrador)
+  // Se LinkWrite=0, o destino é Rd (Instr[15:12]).
+  // Se LinkWrite=1, o destino é forçado para R14 (4'b1110).
+  mux2 #(4) wr_addr_mux(Instr[15:12], 4'b1110, LinkWrite, EscritaRegFinal);
+
+  // MUX 2: Decide O QUE escrever (qual dado)
+  // Se LinkWrite=0, o dado é o resultado normal (da ULA ou memória).
+  // Se LinkWrite=1, o dado é o endereço de retorno (PC+4).
+  mux2 #(32) wr_data_mux(Result, PCPlus4, LinkWrite, EscritaFinal);
+
+  //Lógica para a contagem do PC
   mux2 #(32) pcmux(PCPlus4, ALUResult, PCSrc, PCNext);
   flopr #(32) pcreg(clk, reset, PCNext, PC);
   adder #(32) pcadd1(PC, 32'd4, PCPlus4);
@@ -250,8 +270,8 @@ module datapath(input  logic        clk, reset,
   mux2 #(4)   ra1mux(Instr[19:16], 4'b1111, RegSrc[0], RA1);
   mux2 #(4)   ra2mux(Instr[3:0], Instr[15:12], RegSrc[1], RA2);
   
-  regfile rf(clk, RegWrite, RA1, RA2,
-             Instr[15:12], Result, PCPlus8, 
+  regfile rf(clk, RegWrite, RA1, RA2, EscritaRegFinal,
+             EscritaFinal,  PCPlus8, 
              SrcA, WriteData); 
              
   mux2 #(32)  resmux(ALUResult, ReadData, MemtoReg, Result);
@@ -265,7 +285,7 @@ endmodule
 
 module regfile(input  logic       clk, 
                input  logic       we3, 
-               input  logic [3:0]  ra1, ra2, wa3, 
+               input  logic [3:0]  ra1, ra2, wa3,      
                input  logic [31:0] wd3, r15,
                output logic [31:0] rd1, rd2);
 
@@ -319,6 +339,7 @@ module mux2 #(parameter WIDTH = 8)
             (input  logic [WIDTH-1:0] d0, d1, 
              input  logic             s, 
              output logic [WIDTH-1:0] y);
+  //Caso s for 1, d1 sai, caso for 0, d0 sai
   assign y = s ? d1 : d0; 
 endmodule
 
