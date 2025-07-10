@@ -37,7 +37,7 @@ LSL R3, R1, #2          ; R3 = R1 << 2 = 20 (0x14)
 //----------ASR
 MOV R1, #0              ; R1 = 0
 SUB R1, R1, #4          ; R1 = 0 - 4 = -4 (0xFFFFFFFC)
-ASR R3, R1, #1          ; R3 = -4 >> 1 = -2 (0xFFFFFFFE)
+ASR R3, R1, #1          ; R3 = -4 >> 1 = -2 (0xFFFFFFE)
 
 //-Deslocamento na instrução
 MOV R1, #10
@@ -46,7 +46,7 @@ ADD R3, R1, R2, LSL #2  ; R3 = 10 + (20) = 30 (0x1E)
 
 //---------BL
 MOV R1, #0
-BL  sub_rotina          ; Chama a sub-rotina, LR = 0x90
+BL  sub_rotina          ; Chama a sub-rotina, LR = 0x80
 ADD R1, R1, #1          ; (Ponto de retorno) R1 = 100 + 1 = 101 (0x65)
 B   fim_do_codigo
 sub_rotina:
